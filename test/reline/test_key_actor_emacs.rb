@@ -2144,6 +2144,7 @@ class Reline::KeyActor::Emacs::Test < Reline::TestCase
   pp Encoding.default_internal
   pp Encoding.default_external
   pp Reline::IOGate.encoding
+  pp ENV['RELINE_TEST_ENCODING']
   pp '=' * 30
 
   # Unicode emoji test
@@ -2154,6 +2155,7 @@ class Reline::KeyActor::Emacs::Test < Reline::TestCase
       pp Encoding.default_internal
       pp Encoding.default_external
       pp Reline::IOGate.encoding
+      pp ENV['RELINE_TEST_ENCODING']
       pp '=' * 30
       # U+1F468 U+200D U+1F469 U+200D U+1F467 U+200D U+1F466 is family: man, woman, girl, boy "👨‍👩‍👧‍👦"
       input_keys("\u{1F468}") # U+1F468 is man "👨"
@@ -2206,6 +2208,7 @@ class Reline::KeyActor::Emacs::Test < Reline::TestCase
       pp Encoding.default_internal
       pp Encoding.default_external
       pp Reline::IOGate.encoding
+      pp ENV['RELINE_TEST_ENCODING']
       pp '=' * 30
       input_keys("\u0030") # U+0030 is DIGIT ZERO
       assert_line("\u0030")
