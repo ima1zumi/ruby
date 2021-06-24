@@ -2143,12 +2143,18 @@ class Reline::KeyActor::Emacs::Test < Reline::TestCase
   pp __ENCODING__
   pp Encoding.default_internal
   pp Encoding.default_external
-  pp Reline::IOGate
+  pp Reline::IOGate.encoding
   pp '=' * 30
 
   # Unicode emoji test
   if Reline::IOGate.encoding == Encoding::UTF_8
     def test_ed_insert_for_include_zwj_emoji
+      pp '=' * 30
+      pp __ENCODING__
+      pp Encoding.default_internal
+      pp Encoding.default_external
+      pp Reline::IOGate.encoding
+      pp '=' * 30
       # U+1F468 U+200D U+1F469 U+200D U+1F467 U+200D U+1F466 is family: man, woman, girl, boy "👨‍👩‍👧‍👦"
       input_keys("\u{1F468}") # U+1F468 is man "👨"
       assert_line("\u{1F468}")
@@ -2195,6 +2201,12 @@ class Reline::KeyActor::Emacs::Test < Reline::TestCase
 
     def test_ed_insert_for_include_valiation_selector
       # U+0030 U+FE00 is DIGIT ZERO + VARIATION SELECTOR-1 "0︀"
+      pp '=' * 30
+      pp __ENCODING__
+      pp Encoding.default_internal
+      pp Encoding.default_external
+      pp Reline::IOGate.encoding
+      pp '=' * 30
       input_keys("\u0030") # U+0030 is DIGIT ZERO
       assert_line("\u0030")
       assert_byte_pointer_size("\u0030")
