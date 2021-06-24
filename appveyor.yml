@@ -71,4 +71,4 @@ for:
     - \usr\bin\ruby -ropenssl -e "puts 'Build    ' + OpenSSL::OPENSSL_VERSION, 'Runtime  ' + OpenSSL::OPENSSL_LIBRARY_VERSION"
   test_script:
     - set /a JOBS=%NUMBER_OF_PROCESSORS%
-    - nmake -l "TESTOPTS=-v --timeout-scale=3.0 --excludes=../test/excludes/_appveyor -j%JOBS% --exclude readline --exclude win32ole --exclude test_bignum --exclude test_syntax --exclude test_open-uri --exclude test_bundled_ca" test-all TESTS="../test/reline"
+    - nmake -l test-all "TESTOPTS=-v readline reline"
