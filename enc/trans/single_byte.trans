@@ -64,6 +64,7 @@
   transcode_tblgen_singlebyte "IBM865"
   transcode_tblgen_singlebyte "IBM866"
   transcode_tblgen_singlebyte "IBM869"
+  transcode_tblgen_singlebyte "IROHA"
   transcode_tblgen_singlebyte "MACCROATIAN"
   transcode_tblgen_singlebyte "MACCYRILLIC"
   transcode_tblgen_singlebyte "MACGREEK"
