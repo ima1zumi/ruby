@@ -166,8 +166,13 @@ def parse_scripts(data, categories)
         categories[current] = file[:title]
         (names[file[:title]] ||= []) << current
         cps = []
-      elsif /^(\h+)(?:\.\.(\h+))?\s*;\s*(\w+)/ =~ line
-        current = $3
+      elsif /^(\h+)(?:\.\.(\h+))?\s*;\s*(\w+)(?:\s*;\s*(\w+))?\s*#/ =~ line
+        # ex: InCB_Linker
+        if !$4.nil?
+          current = "#{$3}_#{$4}"
+        else
+          current = $3
+        end
         $2 ? cps.concat(($1.to_i(16)..$2.to_i(16)).to_a) : cps.push($1.to_i(16))
       end
     end
