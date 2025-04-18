@@ -1245,7 +1245,12 @@ srcs-extra: $(EXTRA_SRCS)
 realclean-srcs-extra::
 	$(Q)$(RM) $(EXTRA_SRCS)
 
-LIB_SRCS = $(srcdir)/lib/unicode_normalize/tables.rb
+UNICODE_NORMALIZE_TABLES = $(srcdir)/lib/unicode_normalize/tables.rb
+encs: $(ALWAYS_UPDATE_UNICODE:yes=update-unicode_normalize-tables)
+
+update-unicode_normalize-tables: $(UNICODE_NORMALIZE_TABLES)
+
+LIB_SRCS = $(UNICODE_NORMALIZE_TABLES)
 
 srcs-lib: $(LIB_SRCS)
 
