@@ -112,17 +112,6 @@ accent_array = combining_class.keys + composition_table.keys.collect {|key| key.
 
 composition_starters = composition_table.keys.collect {|key| key.first}
 
-# Special treatment for Unicode 16.0.0
-# Add characters that can be decomposed (even indirectly) so that
-# the first character in the decomposition is a an accent to accents.
-# We do this here up to two levels deep.
-# In the future, there may be even deeper levels.
-starter_accents = composition_starters & accent_array
-decomposition_table.each do |k, v|
-  accent_array << k if starter_accents.include? v.first
-  accent_array << k if starter_accents.include? decomposition_table[v.first]&.first
-end
-
 hangul_no_trailing = []
 0xAC00.step(0xD7A3, 28) {|c| hangul_no_trailing << c}
 
@@ -159,6 +148,29 @@ while kompatible_table.any? {|key, value|
         expanded = value.map {|v| kompatible_table[v] || v}.flatten
         kompatible_table[key] = expanded unless value == expanded
       }
+end
+
+NFD_QC = {}
+NFC_QC = {}
+NFKD_QC = {}
+NFKC_QC = {}
+
+quick_checks = %w(NFD_QC NFC_QC NFKD_QC NFKC_QC)
+
+vpath.foreach("#{InputDataDir}/DerivedNormalizationProps.txt") do |line|
+  range, prop, value = line.split('#').first.split(';').map(&:strip)
+
+  if quick_checks.include?(prop)
+    qc = Object.const_get(prop)
+    start_hex, end_hex = range.split('..').map {|c| c.to_i(16)} rescue [range.to_i(16), range.to_i(16)]
+    if start_hex && end_hex
+      (start_hex..end_hex).each do |cp|
+        qc[cp] = value # 'M' or 'N' or 'Y'
+      end
+    else
+      qc[start_hex] = value
+    end
+  end
 end
 
 # generate normalization tables file
@@ -206,13 +218,12 @@ module UnicodeNormalize  # :nodoc:
     "[<% kompatible_table.keys.each_regexp_chars do |rx|%><%=rx%>" \
     "<%end%>]"
 
-  class_table = {
+  COMBINING_CLASS_TABLE = {
 % combining_class.each do |key, value|
     "<%=key.to_UTF8%>"=><%=value%><%=%>,
 % end
   }
-  class_table.default = 0
-  CLASS_TABLE = class_table.freeze
+  COMBINING_CLASS_TABLE.default = 0
 
   DECOMPOSITION_TABLE = {
 % decomposition_table.each do |key, value|
@@ -229,6 +240,30 @@ module UnicodeNormalize  # :nodoc:
   COMPOSITION_TABLE = {
 % composition_table.each do |key, value|
     "<%=key.to_UTF8%>"=>"<%=value.to_UTF8%>",
+% end
+  }.freeze
+
+  NFD_QC = {
+% NFD_QC.each do |key, value|
+    "<%=key.to_UTF8%>"=>"<%=value%>"<%=%>,
+% end
+  }.freeze
+
+  NFKD_QC = {
+% NFKD_QC.each do |key, value|
+    "<%=key.to_UTF8%>"=>"<%=value%>"<%=%>,
+% end
+  }.freeze
+
+  NFC_QC = {
+% NFC_QC.each do |key, value|
+    "<%=key.to_UTF8%>"=>"<%=value%>"<%=%>,
+% end
+  }.freeze
+
+  NFKC_QC = {
+% NFKC_QC.each do |key, value|
+    "<%=key.to_UTF8%>"=>"<%=value%>"<%=%>,
 % end
   }.freeze
 end

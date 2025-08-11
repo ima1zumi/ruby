@@ -29,7 +29,7 @@ UNICODE_BETA = NO
 
 ### set the following environment variable or uncomment the line if
 ### the Unicode data files should be updated completely on every update ('make up',...).
-# ALWAYS_UPDATE_UNICODE = yes
+ALWAYS_UPDATE_UNICODE = yes
 UNICODE_DATA_DIR = enc/unicode/data/$(UNICODE_VERSION)/ucd
 UNICODE_SRC_DATA_DIR = $(srcdir)/$(UNICODE_DATA_DIR)
 UNICODE_SRC_EMOJI_DATA_DIR = $(srcdir)/enc/unicode/data/emoji/$(UNICODE_EMOJI_VERSION)
@@ -1733,6 +1733,7 @@ UNICODE_PROPERTY_FILES = \
 		$(UNICODE_SRC_DATA_DIR)/Blocks.txt \
 		$(UNICODE_SRC_DATA_DIR)/DerivedAge.txt \
 		$(UNICODE_SRC_DATA_DIR)/DerivedCoreProperties.txt \
+		$(UNICODE_SRC_DATA_DIR)/DerivedNormalizationProps.txt \
 		$(UNICODE_SRC_DATA_DIR)/PropList.txt \
 		$(UNICODE_SRC_DATA_DIR)/PropertyAliases.txt \
 		$(UNICODE_SRC_DATA_DIR)/PropertyValueAliases.txt \
@@ -1836,6 +1837,7 @@ touch-unicode-files:
 UNICODE_TABLES_DATA_FILES = \
 	$(UNICODE_SRC_DATA_DIR)/UnicodeData.txt \
 	$(UNICODE_SRC_DATA_DIR)/CompositionExclusions.txt \
+	$(UNICODE_SRC_DATA_DIR)/DerivedNormalizationProps.txt \
 	$(empty)
 
 UNICODE_TABLES_DEPENDENTS_1 = none$(ALWAYS_UPDATE_UNICODE)

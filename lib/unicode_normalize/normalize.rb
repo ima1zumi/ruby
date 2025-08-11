@@ -22,25 +22,9 @@ require_relative 'tables'
 
 # :stopdoc:
 module UnicodeNormalize  # :nodoc:
-  ## Constant for max hash capacity to avoid DoS attack
-  MAX_HASH_LENGTH = 18000 # enough for all test cases, otherwise tests get slow
-
-  ## Regular Expressions and Hash Constants
-  REGEXP_D = Regexp.compile(REGEXP_D_STRING, Regexp::EXTENDED)
-  REGEXP_C = Regexp.compile(REGEXP_C_STRING, Regexp::EXTENDED)
-  REGEXP_K = Regexp.compile(REGEXP_K_STRING, Regexp::EXTENDED)
-  NF_HASH_D = Hash.new do |hash, key|
-                         hash.shift if hash.length>MAX_HASH_LENGTH # prevent DoS attack
-                         hash[key] = nfd_one(key)
-                       end
-  NF_HASH_C = Hash.new do |hash, key|
-                         hash.shift if hash.length>MAX_HASH_LENGTH # prevent DoS attack
-                         hash[key] = nfc_one(key)
-                       end
-
   ## Constants For Hangul
   # for details such as the meaning of the identifiers below, please see
-  # http://www.unicode.org/versions/Unicode7.0.0/ch03.pdf, pp. 144/145
+  # https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-3/#G24646
   SBASE = 0xAC00
   LBASE = 0x1100
   VBASE = 0x1161
@@ -48,8 +32,14 @@ module UnicodeNormalize  # :nodoc:
   LCOUNT = 19
   VCOUNT = 21
   TCOUNT = 28
-  NCOUNT = VCOUNT * TCOUNT
-  SCOUNT = LCOUNT * NCOUNT
+  NCOUNT = VCOUNT * TCOUNT # 588
+  SCOUNT = LCOUNT * NCOUNT # 11172
+
+  SLAST = SBASE + SCOUNT - 1  # U+D7A3
+  LLAST = LBASE + LCOUNT - 1  # U+1112
+  VLAST = VBASE + VCOUNT - 1  # U+1175
+  TLAST = TBASE + TCOUNT - 1  # U+11C2
+  TFIRST = TBASE + 1          # U+11A8
 
   # Unicode-based encodings (except UTF-8)
   UNICODE_ENCODINGS = [Encoding::UTF_16BE, Encoding::UTF_16LE, Encoding::UTF_32BE, Encoding::UTF_32LE,
@@ -65,72 +55,155 @@ module UnicodeNormalize  # :nodoc:
     (t==TBASE ? [l, v] : [l, v, t]).pack('U*') + target[1..-1]
   end
 
-  def self.hangul_comp_one(string)
-    length = string.length
-    if length>1 and 0 <= (lead =string[0].ord-LBASE) and lead  < LCOUNT and
-                    0 <= (vowel=string[1].ord-VBASE) and vowel < VCOUNT
-      lead_vowel = SBASE + (lead * VCOUNT + vowel) * TCOUNT
-      if length>2 and 0 < (trail=string[2].ord-TBASE) and trail < TCOUNT
-        (lead_vowel + trail).chr(Encoding::UTF_8) + string[3..-1]
-      else
-        lead_vowel.chr(Encoding::UTF_8) + string[2..-1]
-      end
-    else
-      string
+  def self.hangul_comp_one(a, b)
+    a_ord = a.ord
+    b_ord = b.ord
+
+    # (L, V) -> LV
+    if (LBASE..LLAST).cover?(a_ord) && (VBASE..VLAST).cover?(b_ord)
+      l = a_ord - LBASE
+      v = b_ord - VBASE
+      lv = l * NCOUNT + v * TCOUNT
+      codepoint = SBASE + lv # Codepoint of the composed Hangul
+      return codepoint.chr(Encoding::UTF_8)
     end
+
+    # (LV, T) -> LVT
+    if (SBASE..SLAST).cover?(a_ord)
+      s = a_ord - SBASE
+      if (s % TCOUNT) == 0 && (TFIRST..TLAST).cover?(b_ord)
+        composed = a_ord + (b_ord - TBASE)
+        return composed.chr(Encoding::UTF_8)
+      end
+    end
+
+    nil
   end
 
-  ## Canonical Ordering
-  def self.canonical_ordering_one(string)
-    sorting = string.each_char.collect { |c| [c, CLASS_TABLE[c]] }
-    (sorting.length-2).downto(0) do |i| # almost, but not exactly bubble sort
-      (0..i).each do |j|
-        later_class = sorting[j+1].last
-        if 0<later_class and later_class<sorting[j].last
-          sorting[j], sorting[j+1] = sorting[j+1], sorting[j]
+  def self.to_nfd_arr(string)
+    decomposed_arr = string.each_char.flat_map { decompose_one(it) }
+    canonical_ordering(decomposed_arr)
+  end
+
+  def self.to_nfkd_arr(string)
+    kompatibled_arr = string.each_char.flat_map { kompatible_one(it) }
+    decomposed_arr = kompatibled_arr.each.flat_map { decompose_one(it) }
+    canonical_ordering(decomposed_arr)
+  end
+
+  def self.to_nfkc_arr(string)
+    arr = to_nfkd_arr(string)
+    recompose_arr(arr)
+  end
+
+  def self.to_nfc_arr(string)
+    nfd_arr = to_nfd_arr(string)
+    recompose_arr(nfd_arr)
+  end
+
+  def self.recompose_arr(nfd_arr)
+    result = []
+    last_starter_idx = nil
+
+    nfd_arr.each do |char|
+      current_cc = COMBINING_CLASS_TABLE[char]
+      if result.empty?
+        result << char
+        last_starter_idx = 0
+        next
+      end
+
+      combined = false
+      if last_starter_idx
+        unless blocked?(result, last_starter_idx, current_cc)
+          starter = result[last_starter_idx]
+
+          # Try hangul comp
+          new_cp = hangul_comp_one(starter, char)
+          # Try to compose with a starter
+          unless new_cp
+            pair = starter + char
+            new_cp = COMPOSITION_TABLE[pair]
+          end
+
+          if new_cp
+            result[last_starter_idx] = new_cp
+            combined = true
+          end
         end
       end
-    end
-    return sorting.collect(&:first).join('')
-  end
 
-  ## Normalization Forms for Patterns (not whole Strings)
-  def self.nfd_one(string)
-    string = string.chars.map! {|c| DECOMPOSITION_TABLE[c] || c}.join('')
-    canonical_ordering_one(hangul_decomp_one(string))
-  end
-
-  def self.nfc_one(string)
-    nfd_string = nfd_one string
-    start = nfd_string[0]
-    last_class = CLASS_TABLE[start]-1
-    accents = ''
-    nfd_string[1..-1].each_char do |accent|
-      accent_class = CLASS_TABLE[accent]
-      if last_class<accent_class and composite = COMPOSITION_TABLE[start+accent]
-        start = composite
-      else
-        accents << accent
-        last_class = accent_class
+      unless combined
+        result << char
+        last_starter_idx = result.size - 1 if current_cc == 0
       end
     end
-    accents = nfc_one(accents) if accents.length>1 # TODO: change from recursion to loop
-    hangul_comp_one(start+accents)
+
+    result
+  end
+
+  def self.blocked?(result, last_starter_idx, new_char_cc)
+    (last_starter_idx+1..result.size-1).each do |idx|
+      cc = COMBINING_CLASS_TABLE[result[idx]]
+      return true if cc >= new_char_cc
+    end
+
+    false
+  end
+
+  def self.decompose_one(target)
+    h = hangul_decomp_one(target)
+    if h.size > 1
+      return h.each_char.flat_map { decompose_one(it) }
+    end
+
+    if mapped = DECOMPOSITION_TABLE[target]
+      mapped.each_char.flat_map { decompose_one(it) }
+    else
+      [target]
+    end
+  end
+
+  def self.kompatible_one(target)
+    if mapped = KOMPATIBLE_TABLE[target]
+      mapped
+    else
+      target
+    end
+  end
+
+  # https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-3/#G49591
+  def self.canonical_ordering(arr)
+    i = 0
+    while i < arr.size - 1
+      ccc1 = COMBINING_CLASS_TABLE[arr[i]]
+      ccc2 = COMBINING_CLASS_TABLE[arr[i+1]]
+
+      if ccc1 > ccc2 && ccc2 != 0
+        arr[i], arr[i+1] = arr[i+1], arr[i]
+        i -= 1 if i > 0
+      else
+        i += 1
+      end
+    end
+    arr
   end
 
   def self.normalize(string, form = :nfc)
     encoding = string.encoding
     case encoding
     when Encoding::UTF_8
+      return string if string.ascii_only?
+
       case form
       when :nfc then
-        string.gsub REGEXP_C, NF_HASH_C
+        to_nfc_arr(string).join
       when :nfd then
-        string.gsub REGEXP_D, NF_HASH_D
+        to_nfd_arr(string).join
       when :nfkc then
-        string.gsub(REGEXP_K, KOMPATIBLE_TABLE).gsub(REGEXP_C, NF_HASH_C)
+        to_nfkc_arr(string).join
       when :nfkd then
-        string.gsub(REGEXP_K, KOMPATIBLE_TABLE).gsub(REGEXP_D, NF_HASH_D)
+        to_nfkd_arr(string).join
       else
         raise ArgumentError, "Invalid normalization form #{form}."
       end
@@ -147,21 +220,17 @@ module UnicodeNormalize  # :nodoc:
     encoding = string.encoding
     case encoding
     when Encoding::UTF_8
+      return true if string.ascii_only?
+
       case form
       when :nfc then
-        string.scan REGEXP_C do |match|
-          return false  if NF_HASH_C[match] != match
-        end
-        true
+        return to_nfc_arr(string).join == string
       when :nfd then
-        string.scan REGEXP_D do |match|
-          return false  if NF_HASH_D[match] != match
-        end
-        true
+        return to_nfd_arr(string).join == string
       when :nfkc then
-        normalized?(string, :nfc) and string !~ REGEXP_K
+        return to_nfkc_arr(string).join == string
       when :nfkd then
-        normalized?(string, :nfd) and string !~ REGEXP_K
+        return to_nfkd_arr(string).join == string
       else
         raise ArgumentError, "Invalid normalization form #{form}."
       end
@@ -171,6 +240,25 @@ module UnicodeNormalize  # :nodoc:
       normalized? string.encode(Encoding::UTF_8), form
     else
       raise Encoding::CompatibilityError, "Unicode Normalization not appropriate for #{encoding}"
+    end
+  end
+
+  # TODO: Implement quick_check?
+  def self.quick_check?(string, method, table, form = :nfc)
+    return false if canonical_ordering_one(hangul_decomp_one(string)) != string
+
+    has_maybe = false
+    string.each_char do |char|
+      qc = table[char]
+      return false if qc == 'N'
+      has_maybe ||= true if qc == 'M'
+    end
+
+    if has_maybe
+      changed_string = send(method, string) # FIXME
+      return (changed_string == string)
+    else
+      true
     end
   end
 end # module
