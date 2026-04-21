@@ -7255,6 +7255,51 @@ rb_str_escape(VALUE str)
     return result;
 }
 
+/* Lookup table for the UTF-8 inspect fast path: 1 = byte can be emitted
+ * verbatim, 0 = byte needs further examination. Unsafe entries cover
+ * 0x00-0x1F (control), 0x22 ('"'), 0x23 ('#'), 0x5C ('\\'), 0x7F (DEL),
+ * and 0x80-0xFF (non-ASCII UTF-8 lead / continuation bytes). */
+static const char inspect_ascii_safe[256] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* 0x00-0x0F */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* 0x10-0x1F */
+    1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, /* 0x20-0x2F */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, /* 0x30-0x3F */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, /* 0x40-0x4F */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, /* 0x50-0x5F */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, /* 0x60-0x6F */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, /* 0x70-0x7F */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* 0x80-0xFF */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+};
+
+/* Inline UTF-8 char length from lead byte; caller must guarantee VALID input. */
+static inline int
+utf8_enclen_fast(const char *p)
+{
+    unsigned char c = (unsigned char)*p;
+    if (c < 0x80) return 1;
+    if (c < 0xE0) return 2;
+    if (c < 0xF0) return 3;
+    return 4;
+}
+
+/* Inline UTF-8 codepoint decode; caller must guarantee VALID input. */
+static inline unsigned int
+utf8_codepoint_fast(const char *p, int len)
+{
+    unsigned char c = (unsigned char)*p;
+    if (len == 1) return c;
+    if (len == 2) return ((c & 0x1F) << 6) | (p[1] & 0x3F);
+    if (len == 3) return ((c & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+    return ((c & 0x07) << 18) | ((p[1] & 0x3F) << 12) | ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+}
+
 /*
  *  call-seq:
  *    inspect -> string
@@ -7274,6 +7319,10 @@ rb_str_inspect(VALUE str)
     rb_encoding *resenc = rb_default_internal_encoding();
     int unicode_p = rb_enc_unicode_p(enc);
     int asciicompat = rb_enc_asciicompat(enc);
+    /* The fast path needs the string to be well-formed UTF-8 (VALID or 7BIT);
+     * inline decoding and the ASCII safe-byte table stay correct in both. */
+    int is_utf8_fast = (encidx == ENCINDEX_UTF_8 &&
+                        ENC_CODERANGE_CLEAN_P(ENC_CODERANGE(str)));
 
     if (resenc == NULL) resenc = rb_default_external_encoding();
     if (!rb_enc_asciicompat(resenc)) resenc = rb_usascii_encoding();
@@ -7286,21 +7335,32 @@ rb_str_inspect(VALUE str)
         unsigned int c, cc;
         int n;
 
-        n = rb_enc_precise_mbclen(p, pend, enc);
-        if (!MBCLEN_CHARFOUND_P(n)) {
-            if (p > prev) str_buf_cat(result, prev, p - prev);
-            n = rb_enc_mbminlen(enc);
-            if (pend < p + n)
-                n = (int)(pend - p);
-            while (n--) {
-                snprintf(buf, CHAR_ESC_LEN, "\\x%02X", *p & 0377);
-                str_buf_cat(result, buf, strlen(buf));
-                prev = ++p;
-            }
-            continue;
+        if (is_utf8_fast) {
+            /* Bulk-skip ASCII bytes that don't need escaping, avoiding
+             * per-byte encoding function calls. */
+            while (p < pend && inspect_ascii_safe[(unsigned char)*p]) p++;
+            if (p >= pend) break;
+            /* Well-formed UTF-8 (VALID or 7BIT): inline decode is safe. */
+            n = utf8_enclen_fast(p);
+            c = utf8_codepoint_fast(p, n);
         }
-        n = MBCLEN_CHARFOUND_LEN(n);
-        c = rb_enc_mbc_to_codepoint(p, pend, enc);
+        else {
+            n = rb_enc_precise_mbclen(p, pend, enc);
+            if (!MBCLEN_CHARFOUND_P(n)) {
+                if (p > prev) str_buf_cat(result, prev, p - prev);
+                n = rb_enc_mbminlen(enc);
+                if (pend < p + n)
+                    n = (int)(pend - p);
+                while (n--) {
+                    snprintf(buf, CHAR_ESC_LEN, "\\x%02X", *p & 0377);
+                    str_buf_cat(result, buf, strlen(buf));
+                    prev = ++p;
+                }
+                continue;
+            }
+            n = MBCLEN_CHARFOUND_LEN(n);
+            c = rb_enc_mbc_to_codepoint(p, pend, enc);
+        }
         p += n;
         if ((asciicompat || unicode_p) &&
           (c == '"'|| c == '\\' ||
