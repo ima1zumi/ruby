@@ -403,6 +403,10 @@ describe "String#inspect" do
       0.chr('utf-8').inspect.should == '"\\u0000"'
     end
 
+    it "returns a string with ASCII control characters replaced by \\u notation in multibyte UTF-8 strings" do
+      "こん\x01\x7F".inspect.should == '"こん\\u0001\\u007F"'
+    end
+
     it "returns a string with extended characters for Unicode strings" do
       [ [0240.chr('utf-8'), '" "'],
         [0241.chr('utf-8'), '"¡"'],
