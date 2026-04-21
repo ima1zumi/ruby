@@ -7255,10 +7255,9 @@ rb_str_escape(VALUE str)
     return result;
 }
 
-/* Lookup table for the UTF-8 inspect fast path: 1 = byte can be emitted
- * verbatim, 0 = byte needs further examination. Unsafe entries cover
- * 0x00-0x1F (control), 0x22 ('"'), 0x23 ('#'), 0x5C ('\\'), 0x7F (DEL),
- * and 0x80-0xFF (non-ASCII UTF-8 lead / continuation bytes). */
+/* Lookup table for the inspect fast path. Unsafe (0): 0x00-0x1F
+ * (control), 0x22 ("), 0x23 (#), 0x5C (\), 0x7F (DEL), 0x80-0xFF
+ * (non-ASCII). Safe (1): everything else. */
 static const char inspect_ascii_safe[256] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* 0x00-0x0F */
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* 0x10-0x1F */
@@ -7319,13 +7318,12 @@ rb_str_inspect(VALUE str)
     rb_encoding *resenc = rb_default_internal_encoding();
     int unicode_p = rb_enc_unicode_p(enc);
     int asciicompat = rb_enc_asciicompat(enc);
-    /* Fast path when every byte is trivially decodable as single-byte ASCII:
-     * - 7BIT strings (any encoding, all bytes < 0x80)
-     * - UTF-8 VALID strings (multibyte handled by inline UTF-8 decoder)
-     * The ASCII safe-byte table and inline decoder stay correct for both. */
+    /* Fast path: strings whose bytes can be decoded inline without
+     * per-char encoding calls. 7BIT = all bytes < 0x80 (any encoding);
+     * UTF-8 VALID = well-formed multibyte (handled by inline decoder). */
     int cr = ENC_CODERANGE(str);
-    int is_ascii_fast = (cr == ENC_CODERANGE_7BIT) ||
-                        (encidx == ENCINDEX_UTF_8 && cr == ENC_CODERANGE_VALID);
+    int fast_path_p = (cr == ENC_CODERANGE_7BIT) ||
+                      (encidx == ENCINDEX_UTF_8 && cr == ENC_CODERANGE_VALID);
 
     if (resenc == NULL) resenc = rb_default_external_encoding();
     if (!rb_enc_asciicompat(resenc)) resenc = rb_usascii_encoding();
@@ -7338,12 +7336,10 @@ rb_str_inspect(VALUE str)
         unsigned int c, cc;
         int n;
 
-        if (is_ascii_fast) {
-            /* Bulk-skip ASCII bytes that don't need escaping, avoiding
-             * per-byte encoding function calls. */
+        if (fast_path_p) {
+            /* Bulk-skip safe bytes, then inline-decode the next char. */
             while (p < pend && inspect_ascii_safe[(unsigned char)*p]) p++;
             if (p >= pend) break;
-            /* 7BIT or well-formed UTF-8: inline decode is safe. */
             n = utf8_enclen_fast(p);
             c = utf8_codepoint_fast(p, n);
         }
