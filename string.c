@@ -7319,10 +7319,13 @@ rb_str_inspect(VALUE str)
     rb_encoding *resenc = rb_default_internal_encoding();
     int unicode_p = rb_enc_unicode_p(enc);
     int asciicompat = rb_enc_asciicompat(enc);
-    /* The fast path needs the string to be well-formed UTF-8 (VALID or 7BIT);
-     * inline decoding and the ASCII safe-byte table stay correct in both. */
-    int is_utf8_fast = (encidx == ENCINDEX_UTF_8 &&
-                        ENC_CODERANGE_CLEAN_P(ENC_CODERANGE(str)));
+    /* Fast path when every byte is trivially decodable as single-byte ASCII:
+     * - 7BIT strings (any encoding, all bytes < 0x80)
+     * - UTF-8 VALID strings (multibyte handled by inline UTF-8 decoder)
+     * The ASCII safe-byte table and inline decoder stay correct for both. */
+    int cr = ENC_CODERANGE(str);
+    int is_ascii_fast = (cr == ENC_CODERANGE_7BIT) ||
+                        (encidx == ENCINDEX_UTF_8 && cr == ENC_CODERANGE_VALID);
 
     if (resenc == NULL) resenc = rb_default_external_encoding();
     if (!rb_enc_asciicompat(resenc)) resenc = rb_usascii_encoding();
@@ -7335,12 +7338,12 @@ rb_str_inspect(VALUE str)
         unsigned int c, cc;
         int n;
 
-        if (is_utf8_fast) {
+        if (is_ascii_fast) {
             /* Bulk-skip ASCII bytes that don't need escaping, avoiding
              * per-byte encoding function calls. */
             while (p < pend && inspect_ascii_safe[(unsigned char)*p]) p++;
             if (p >= pend) break;
-            /* Well-formed UTF-8 (VALID or 7BIT): inline decode is safe. */
+            /* 7BIT or well-formed UTF-8: inline decode is safe. */
             n = utf8_enclen_fast(p);
             c = utf8_codepoint_fast(p, n);
         }
