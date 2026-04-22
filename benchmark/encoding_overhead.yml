@@ -1,0 +1,89 @@
+prelude: |
+  # inspect hits ONIGENC_PRECISE_MBC_ENC_LEN + ONIGENC_MBC_TO_CODE + ONIGENC_IS_CODE_CTYPE per character
+  utf8_short = "こんにちは世界！"
+  utf8_long  = "こんにちは世界！" * 100
+  ascii_long = "Hello, World! " * 100
+  mixed      = "Hello こんにちは " * 100
+
+  # For each_char / chars - iterates character by character through encoding layer
+  utf8_chars = "あいうえおかきくけこ" * 100
+
+  # --- Regression-focused cases for rb_str_inspect UTF-8 fast path ---
+
+  # Tiny strings — overhead of the added fast-path branch / coderange check
+  str_empty  = ""
+  str_1ascii = "a"
+  str_1utf8  = "あ"
+
+  # Non-UTF-8 encodings: must take the generic path — should NOT regress
+  binary_long    = ("Hello, World! " * 100).b
+  us_ascii_long  = ("Hello, World! " * 100).force_encoding("US-ASCII")
+  eucjp_long     = ("こんにちは世界！" * 100).encode("EUC-JP")
+  sjis_long      = ("こんにちは世界！" * 100).encode("Shift_JIS")
+  utf16le_long   = ("こんにちは世界！" * 100).encode("UTF-16LE")
+
+  # Broken UTF-8 (coderange BROKEN → generic path)
+  broken_utf8 = ("\xFF".b * 1000).force_encoding("UTF-8")
+
+  # Escape-heavy: every byte needs escaping — bulk-skip table never helps
+  newlines_long = "\n"   * 1400
+  ctrl_long     = "\x01" * 1400
+  quotes_long   = "\""   * 1400
+
+  # Sparse escape: mostly ASCII with occasional \n — exercises bulk-skip resume
+  sparse_escape = ("a" * 99 + "\n") * 14
+
+  # Alternating ASCII / escape — pathological for bulk-skip (1 byte per scan)
+  alternating = "a\n" * 700
+
+  # UTF-8 byte-length variants
+  latin_ext_long = "àáâãäåæçèé" * 100  # 2-byte sequences
+  emoji_long     = "😀🎉🌸🚀" * 100     # 4-byte (non-BMP)
+
+  # UTF-8 VALID mixed with ASCII control chars
+  # Previously emitted \xNN; now correctly emits \uNNNN via the fast path
+  utf8_with_ctrl = "こん\x01\x7F" * 100
+
+benchmark:
+  # Baseline (kept from original)
+  inspect_utf8_short:      utf8_short.inspect
+  inspect_utf8_long:       utf8_long.inspect
+  inspect_ascii_long:      ascii_long.inspect
+  inspect_mixed:           mixed.inspect
+
+  # Tiny strings (branch overhead)
+  inspect_empty:           str_empty.inspect
+  inspect_1char_ascii:     str_1ascii.inspect
+  inspect_1char_utf8:      str_1utf8.inspect
+
+  # Non-UTF-8 encodings (generic path — regression check)
+  inspect_binary_long:     binary_long.inspect
+  inspect_us_ascii_long:   us_ascii_long.inspect
+  inspect_eucjp_long:      eucjp_long.inspect
+  inspect_sjis_long:       sjis_long.inspect
+  inspect_utf16le_long:    utf16le_long.inspect
+
+  # Broken UTF-8 (generic path)
+  inspect_broken_utf8:     broken_utf8.inspect
+
+  # Escape-heavy (no bulk-skip possible)
+  inspect_all_newlines:    newlines_long.inspect
+  inspect_control_chars:   ctrl_long.inspect
+  inspect_all_quotes:      quotes_long.inspect
+
+  # Sparse / alternating escape
+  inspect_sparse_escape:   sparse_escape.inspect
+  inspect_alternating:     alternating.inspect
+
+  # UTF-8 byte-length variants
+  inspect_latin_ext_long:  latin_ext_long.inspect
+  inspect_emoji_long:      emoji_long.inspect
+
+  # UTF-8 VALID + ASCII control chars (correctness regression)
+  inspect_utf8_with_ctrl:  utf8_with_ctrl.inspect
+
+  # Iterator benchmarks (unaffected by inspect patch — kept for context)
+  each_char_utf8:          utf8_chars.each_char { }
+  chars_utf8:              utf8_chars.chars
+  valid_encoding_utf8:     utf8_long.valid_encoding?
+  scrub_utf8:              utf8_long.scrub

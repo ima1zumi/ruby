@@ -440,14 +440,3 @@ OnigEncodingDefine(utf_8, UTF_8) = {
   ONIGENC_FLAG_UNICODE,
 };
 ENC_ALIAS("CP65001", "UTF-8")
-
-/*
- * Name: UTF8-MAC
- * Link: http://developer.apple.com/documentation/MacOSX/Conceptual/BPFileSystem/BPFileSystem.html
- * Link: http://developer.apple.com/qa/qa2001/qa1235.html
- * Link: http://developer.apple.com/jp/qa/qa2001/qa1235.html
- * Link: http://www.gnu.org/software/emacs/NEWS.23.2
- */
-ENC_REPLICATE("UTF8-MAC", "UTF-8")
-ENC_ALIAS("UTF-8-MAC", "UTF8-MAC")
-ENC_ALIAS("UTF-8-HFS", "UTF8-MAC") /* Emacs 23.2 */
