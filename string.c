@@ -7317,6 +7317,51 @@ utf8_codepoint_fast(const char *p, int len)
  *
  */
 
+/* Lookup table for rb_str_inspect UTF-8 fast path.
+ * 1 = byte can be passed through without escaping, 0 = needs special handling.
+ * Unsafe bytes: 0x00-0x1F (control), 0x22 ("), 0x23 (#), 0x5C (\), 0x7F (DEL),
+ *               0x80-0xFF (non-ASCII, need multi-byte handling). */
+static const char inspect_ascii_safe[256] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* 0x00-0x0F */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* 0x10-0x1F */
+    1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, /* 0x20-0x2F */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, /* 0x30-0x3F */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, /* 0x40-0x4F */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, /* 0x50-0x5F */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, /* 0x60-0x6F */
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, /* 0x70-0x7F */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* 0x80-0xFF */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+};
+
+/* Inline UTF-8 character byte length from lead byte (assumes valid UTF-8). */
+static inline int
+utf8_enclen_fast(const char *p)
+{
+    unsigned char c = (unsigned char)*p;
+    if (c < 0x80) return 1;
+    if (c < 0xE0) return 2;
+    if (c < 0xF0) return 3;
+    return 4;
+}
+
+/* Inline UTF-8 codepoint decode (assumes valid UTF-8). */
+static inline unsigned int
+utf8_codepoint_fast(const char *p, int len)
+{
+    unsigned char c = (unsigned char)*p;
+    if (len == 1) return c;
+    if (len == 2) return ((c & 0x1F) << 6) | (p[1] & 0x3F);
+    if (len == 3) return ((c & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+    return ((c & 0x07) << 18) | ((p[1] & 0x3F) << 12) | ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+}
+
 VALUE
 rb_str_inspect(VALUE str)
 {
@@ -7342,6 +7387,84 @@ rb_str_inspect(VALUE str)
 
     p = RSTRING_PTR(str); pend = RSTRING_END(str);
     prev = p;
+
+    if (encidx == ENCINDEX_UTF_8 && ENC_CODERANGE(str) == ENC_CODERANGE_VALID) {
+        /* UTF-8 fast path: scan safe ASCII bytes in bulk, avoid per-character
+         * encoding function calls (mbclen, codepoint, isprint) for ASCII. */
+        int enc_eq_resenc = (enc == resenc);
+        while (p < pend) {
+            unsigned int c, cc;
+            int n;
+
+            /* Phase 1: skip safe ASCII bytes without any function calls */
+            while (p < pend && inspect_ascii_safe[(unsigned char)*p]) {
+                p++;
+            }
+            if (p >= pend) break;
+
+            c = (unsigned char)*p;
+            if (c < 0x80) {
+                /* ASCII byte that needs special handling */
+                switch (c) {
+                  case '"':
+                  case '\\':
+                    if (p > prev) str_buf_cat(result, prev, p - prev);
+                    str_buf_cat2(result, "\\");
+                    prev = p;
+                    p++;
+                    continue;
+                  case '#':
+                    if (p + 1 < pend &&
+                        (p[1] == '$' || p[1] == '@' || p[1] == '{')) {
+                        if (p > prev) str_buf_cat(result, prev, p - prev);
+                        str_buf_cat2(result, "\\");
+                        prev = p;
+                    }
+                    p++;
+                    continue;
+                  case '\n': cc = 'n'; break;
+                  case '\r': cc = 'r'; break;
+                  case '\t': cc = 't'; break;
+                  case '\f': cc = 'f'; break;
+                  case '\013': cc = 'v'; break;
+                  case '\010': cc = 'b'; break;
+                  case '\007': cc = 'a'; break;
+                  case 033: cc = 'e'; break;
+                  default: cc = 0; break;
+                }
+                if (cc) {
+                    if (p > prev) str_buf_cat(result, prev, p - prev);
+                    buf[0] = '\\';
+                    buf[1] = (char)cc;
+                    str_buf_cat(result, buf, 2);
+                    p++;
+                    prev = p;
+                    continue;
+                }
+                /* Other non-printable ASCII (e.g. DEL 0x7F) */
+                if (p > prev) str_buf_cat(result, prev, p - prev);
+                snprintf(buf, CHAR_ESC_LEN, "\\x%02X", c);
+                str_buf_cat(result, buf, strlen(buf));
+                p++;
+                prev = p;
+            }
+            else {
+                /* Non-ASCII: inline UTF-8 decode, exact isprint via encoding */
+                n = utf8_enclen_fast(p);
+                c = utf8_codepoint_fast(p, n);
+                if (enc_eq_resenc && rb_enc_isprint(c, enc) && c != 0x85) {
+                    p += n;
+                }
+                else {
+                    if (p > prev) str_buf_cat(result, prev, p - prev);
+                    rb_str_buf_cat_escaped_char(result, c, 1);
+                    p += n;
+                    prev = p;
+                }
+            }
+        }
+    }
+    else {
     while (p < pend) {
         unsigned int c, cc;
         int n;
@@ -7422,6 +7545,7 @@ rb_str_inspect(VALUE str)
             prev = p;
             continue;
         }
+    }
     }
     if (p > prev) str_buf_cat(result, prev, p - prev);
     str_buf_cat2(result, "\"");
