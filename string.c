@@ -7340,28 +7340,6 @@ static const char inspect_ascii_safe[256] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 };
 
-/* Inline UTF-8 character byte length from lead byte (assumes valid UTF-8). */
-static inline int
-utf8_enclen_fast(const char *p)
-{
-    unsigned char c = (unsigned char)*p;
-    if (c < 0x80) return 1;
-    if (c < 0xE0) return 2;
-    if (c < 0xF0) return 3;
-    return 4;
-}
-
-/* Inline UTF-8 codepoint decode (assumes valid UTF-8). */
-static inline unsigned int
-utf8_codepoint_fast(const char *p, int len)
-{
-    unsigned char c = (unsigned char)*p;
-    if (len == 1) return c;
-    if (len == 2) return ((c & 0x1F) << 6) | (p[1] & 0x3F);
-    if (len == 3) return ((c & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
-    return ((c & 0x07) << 18) | ((p[1] & 0x3F) << 12) | ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
-}
-
 VALUE
 rb_str_inspect(VALUE str)
 {
@@ -7449,9 +7427,9 @@ rb_str_inspect(VALUE str)
                 prev = p;
             }
             else {
-                /* Non-ASCII: inline UTF-8 decode, exact isprint via encoding */
-                n = utf8_enclen_fast(p);
-                c = utf8_codepoint_fast(p, n);
+                /* Non-ASCII: use general encoding API (no inline fast path) */
+                n = rb_enc_fast_mbclen(p, pend, enc);
+                c = rb_enc_mbc_to_codepoint(p, pend, enc);
                 if (enc_eq_resenc && rb_enc_isprint(c, enc) && c != 0x85) {
                     p += n;
                 }
