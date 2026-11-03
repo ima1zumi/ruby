@@ -40,6 +40,7 @@
 #include "internal/re.h"
 #include "internal/sanitizers.h"
 #include "internal/simd.h"
+#include "internal/utf8_neon.h"
 #include "internal/string.h"
 #include "internal/transcode.h"
 #include "probes.h"
@@ -807,12 +808,41 @@ search_nonascii(const char *p, const char *e)
     }
 }
 
+/* Same as the ASCII-compatible branch of coderange_scan(), but validates
+ * non-ASCII characters with UTF-8's mbc_enc_len() directly instead of
+ * rb_enc_precise_mbclen() and the encoding's function pointer. */
+static int
+utf8_coderange_scan(const char *p, const char *e)
+{
+    p = search_nonascii(p, e);
+    if (!p) return ENC_CODERANGE_7BIT;
+#ifdef RUBY_UTF8_NEON
+    if ((size_t)(e - p) >= 16) {
+        return utf8_neon_valid((const unsigned char *)p, (const unsigned char *)e)
+            ? ENC_CODERANGE_VALID : ENC_CODERANGE_BROKEN;
+    }
+#endif
+    for (;;) {
+        p = (const char *)rb_utf8_valid_nonascii_run((const OnigUChar *)p, (const OnigUChar *)e);
+        if (!p) return ENC_CODERANGE_BROKEN;
+        if (p == e) break;
+        p = search_nonascii(p, e);
+        if (!p) break;
+    }
+    return ENC_CODERANGE_VALID;
+}
+
 static int
 coderange_scan(const char *p, long len, rb_encoding *enc)
 {
     const char *e = p + len;
+    int encidx = rb_enc_to_index(enc);
 
-    if (rb_enc_to_index(enc) == rb_ascii8bit_encindex()) {
+    if (encidx == ENCINDEX_UTF_8) {
+        return utf8_coderange_scan(p, e);
+    }
+
+    if (encidx == rb_ascii8bit_encindex()) {
         /* enc is ASCII-8BIT.  ASCII-8BIT string never be broken. */
         p = search_nonascii(p, e);
         return p ? ENC_CODERANGE_VALID : ENC_CODERANGE_7BIT;

@@ -37,4 +37,7 @@ PUREFUNC(int rb_data_is_encoding(VALUE obj));
 /* vm.c */
 void rb_free_global_enc_table(void);
 
+/* enc/utf_8.c */
+const OnigUChar *rb_utf8_valid_nonascii_run(const OnigUChar *p, const OnigUChar *e);
+
 #endif /* INTERNAL_ENCODING_H */

@@ -451,3 +451,20 @@ ENC_ALIAS("CP65001", "UTF-8")
 ENC_REPLICATE("UTF8-MAC", "UTF-8")
 ENC_ALIAS("UTF-8-MAC", "UTF8-MAC")
 ENC_ALIAS("UTF-8-HFS", "UTF8-MAC") /* Emacs 23.2 */
+
+/*
+ * For coderange_scan() in string.c.  p < e and *p must be a non-ASCII byte.
+ * Validates the run of consecutive non-ASCII characters starting at p with
+ * mbc_enc_len(), and returns where the run ends: e or the next ASCII byte.
+ * Returns NULL at the first invalid or truncated sequence.
+ */
+const UChar *
+rb_utf8_valid_nonascii_run(const UChar *p, const UChar *e)
+{
+  do {
+    int ret = mbc_enc_len(p, e, &OnigEncodingName(UTF_8));
+    if (!ONIGENC_MBCLEN_CHARFOUND_P(ret)) return NULL;
+    p += ONIGENC_MBCLEN_CHARFOUND_LEN(ret);
+  } while (p < e && (*p & 0x80));
+  return p;
+}
