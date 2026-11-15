@@ -67,25 +67,63 @@ utf8_neon_errors(uint8x16_t in, uint8x16_t prev)
     return veorq_u8(special, vandq_u8(must23, vdupq_n_u8(0x80)));
 }
 
+/* Nonzero in the last three lanes when `in` ends in the middle of a
+ * character, i.e. the next block must start with continuation bytes. */
+static inline uint8x16_t
+utf8_neon_incomplete(uint8x16_t in)
+{
+    const uint8x16_t max = {255,255,255,255,255,255,255,255,
+        255,255,255,255,255, 0xf0 - 1, 0xe0 - 1, 0xc0 - 1};
+    return vqsubq_u8(in, max);
+}
+
 /* p starts at a character boundary; no reads before p or at/after e.
  * The caller has already established that the input contains non-ASCII.
  * Full blocks carry the preceding 3 bytes through prev. A zero-padded
- * final block, including at exact multiples of 16, detects truncated EOF. */
+ * final block, including at exact multiples of 16, detects truncated EOF.
+ *
+ * Like simdutf, the input is read 64 bytes at a time: an all-ASCII 64-byte
+ * block is skipped after checking that the previous block did not end in the
+ * middle of a character, and errors are accumulated and checked once at the
+ * end instead of after every 16 bytes. */
 RBIMPL_ATTR_NOINLINE()
 static int
 utf8_neon_valid(const unsigned char *p, const unsigned char *e)
 {
     uint8x16_t prev = vdupq_n_u8(0);
+    uint8x16_t incomplete = vdupq_n_u8(0);
+    uint8x16_t err = vdupq_n_u8(0);
+    while ((size_t)(e - p) >= 64) {
+        uint8x16_t in0 = vld1q_u8(p);
+        uint8x16_t in1 = vld1q_u8(p + 16);
+        uint8x16_t in2 = vld1q_u8(p + 32);
+        uint8x16_t in3 = vld1q_u8(p + 48);
+        uint8x16_t any = vorrq_u8(vorrq_u8(in0, in1), vorrq_u8(in2, in3));
+        if (vmaxvq_u8(any) < 0x80) {
+            err = vorrq_u8(err, incomplete);
+            incomplete = vdupq_n_u8(0);
+        }
+        else {
+            err = vorrq_u8(err, utf8_neon_errors(in0, prev));
+            err = vorrq_u8(err, utf8_neon_errors(in1, in0));
+            err = vorrq_u8(err, utf8_neon_errors(in2, in1));
+            err = vorrq_u8(err, utf8_neon_errors(in3, in2));
+            incomplete = utf8_neon_incomplete(in3);
+        }
+        prev = in3;
+        p += 64;
+    }
     while ((size_t)(e - p) >= 16) {
         uint8x16_t in = vld1q_u8(p);
-        if (vmaxvq_u8(utf8_neon_errors(in, prev))) return 0;
+        err = vorrq_u8(err, utf8_neon_errors(in, prev));
         prev = in;
         p += 16;
     }
     unsigned char tail[16] = {0};
     size_t remaining = (size_t)(e - p);
     if (remaining) memcpy(tail, p, remaining);
-    return vmaxvq_u8(utf8_neon_errors(vld1q_u8(tail), prev)) == 0;
+    err = vorrq_u8(err, utf8_neon_errors(vld1q_u8(tail), prev));
+    return vmaxvq_u8(err) == 0;
 }
 #endif
 #endif
